@@ -91,8 +91,9 @@ sub lookup_issue {
         password => $self->password,
     );
 
-    my $case = $fb->request_command('search', {
-        q => $number,
+    my $case = $fb->request_method('search', {
+        q    => $number,
+        cols => 'sTitle',
     });
     my $dom = DOM::Tiny->new($case);
 
