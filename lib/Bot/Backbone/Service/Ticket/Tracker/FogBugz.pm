@@ -31,6 +31,27 @@ use WebService::FogBugz;
             # And formatting and matching config...
             title      => 'Case %{issue}s: %{summary}s',
             link       => 'https://company.fogbugz.com/f/cases/%{issue}s',
+
+            # Add attachments for Service::SlackChat messages
+            attachments => [
+                {
+                    fallback   => 'Case %{issue}s: %{summary}s https://company.fogbugz.com/f/cases/%{issue}s',
+                    color      => 'good',
+                    title      => ':fogbugz: %{issue}s - %{title}s',
+                    title_link => 'https://company.fogbugz.com/f/cases/%{issue}s',
+                    title_icon => 'http://www.fogcreek.com/images/KiwiEnvelopeTransparent.png',
+                    text       => '%{description}s',
+                    mrkdwn_in  => ['text', 'fields'],
+                    fields     => [
+                        {
+                            value => "*%{category}s*: %{project}s / %{area}s"
+                                . "   *Status*:  %{status}s."
+                                . "%{assigned_to}s",
+                            short => 0,
+                        },
+                    ]
+                }
+            ],
             patterns   => [
                 qr{(?<!/)\bbugzid:(?<issue>\d+)\b},
                 qr{(?<![\[])\b(?<schema>https:)//company\.fogbugz\.com/f/cases/(?<issue>\d+)\b},
@@ -40,7 +61,7 @@ use WebService::FogBugz;
 
 =head1 DESCRIPTION
 
-This works with L<Bot::Backbone::SErvice::Ticket> to perform FogBugz ticket lookups and summaries.
+This works with L<Bot::Backbone::Service::Ticket> to perform FogBugz ticket lookups and summaries.
 
 =head1 ATTRIBUTE
 
@@ -76,7 +97,7 @@ has password => ( is => 'ro' );
 
 =head2 lookup_issue
 
-This is a vere simple lookup that will grab the case metadata and return the title summary.
+This is a very simple lookup that will grab the case metadata and return serveral fields.
 
 =cut
 
@@ -91,20 +112,42 @@ sub lookup_issue {
         password => $self->password,
     );
 
-    my $case = $fb->request_method('search', {
-        q    => $number,
-        cols => 'sTitle',
-    });
-    my $dom = DOM::Tiny->new($case);
+    my $field_map = {
+        sArea             => 'area',
+        ixBug             => 'issue',
+        sCategory         => 'category',
+        sMilestone        => 'milestone',
+        fOpen             => 'open',
+        sPersonAssignedTo => 'assigned_to',
+        sPriority         => 'priority',
+        sProject          => 'project',
+        sStatus           => 'status',
+        sTitle            => 'title',
+    };
+    my $cols = join(",", keys(%$field_map));
 
+    my $xml = $fb->request_method('search', {
+        q    => $number,
+        cols => $cols,
+    });
+    my $dom = DOM::Tiny->new($xml);
     return unless $dom;
 
-    my $summary = $dom->at("case[ixBug=$number] sTitle")->text,
+    my $case = $dom->at("case[ixBug=$number]");
+    return unless $case;
 
-    return {
-        issue   => $number,
-        summary => $dom->at("case[ixBug=$number] sTitle")->text,
-    };
+    my $issue = {issue => $number};
+
+    my $kidz = $case->children();
+    $kidz->each(
+        sub {
+            my ($e, $num) = @_;
+            my $key = $field_map->{$e->tag} // $e->tag;
+            $issue->{ $key } = $e->text;
+        }
+    );
+
+    return $issue;
 }
 
 __PACKAGE__->meta->make_immutable;
